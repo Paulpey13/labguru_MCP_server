@@ -1,0 +1,28 @@
+{
+  "_comment": "Optional config file. Copy to labguru.config.json. Environment variables override these values. Secrets are best kept in .env, not here.",
+  "domain": "eu.labguru.com",
+  "read_only": false,
+  "timeout": 60,
+  "max_concurrency": 8,
+  "biocollections": [
+    "biochemistry",
+    "culture",
+    "crispr",
+    "mrna",
+    "rodents",
+    "sirna",
+    "taqman",
+    "sp_bioch"
+  ],
+  "direct_inventory": [
+    "antibodies",
+    "cell_lines",
+    "plasmids",
+    "primers"
+  ],
+  "cmr_map": {
+    "biochemistry": { "risk": "custom5", "measure": "custom6" },
+    "culture": { "risk": "custom3", "measure": "custom4" },
+    "sp_bioch": { "risk": "custom3", "measure": "custom4" }
+  }
+}
