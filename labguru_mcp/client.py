@@ -13,7 +13,8 @@ Labguru convention.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -23,24 +24,37 @@ from .formatting import extract_list
 
 
 class LabguruClient:
-    """Async client bound to a :class:`~labguru_mcp.config.Settings` instance."""
+    """Async client bound to a :class:`~labguru_mcp.config.Settings` instance.
 
-    def __init__(self, settings: Settings) -> None:
+    Args:
+        settings: Resolved configuration.
+        transport: Optional ``httpx`` transport. Used by tests to inject a
+            ``MockTransport``; ``None`` in production.
+    """
+
+    def __init__(
+        self, settings: Settings, transport: Optional[httpx.AsyncBaseTransport] = None
+    ) -> None:
         self.settings = settings
         self._token: Optional[str] = settings.token
         self._lock = asyncio.Lock()
         self._http: Optional[httpx.AsyncClient] = None
+        self._transport = transport
+        self._cache: Dict[Tuple[Any, ...], Tuple[float, List[Dict[str, Any]]]] = {}
 
     # -- lifecycle ----------------------------------------------------------
 
     def http(self) -> httpx.AsyncClient:
         # Created lazily so it binds to the active event loop.
         if self._http is None:
-            self._http = httpx.AsyncClient(
+            kwargs: Dict[str, Any] = dict(
                 base_url=self.settings.base_url,
                 timeout=httpx.Timeout(self.settings.timeout),
                 headers={"Accept": "application/json"},
             )
+            if self._transport is not None:
+                kwargs["transport"] = self._transport
+            self._http = httpx.AsyncClient(**kwargs)
         return self._http
 
     async def aclose(self) -> None:
@@ -103,6 +117,41 @@ class LabguruClient:
 
     # -- core request -------------------------------------------------------
 
+    async def _send_with_retry(
+        self, make_request: Callable[[], Any]
+    ) -> httpx.Response:
+        """Send a request, retrying transport errors and 429/5xx with backoff.
+
+        HTTP 401 is intentionally returned (not retried) so the caller can run
+        its re-authentication flow.
+        """
+        delay = self.settings.retry_base_delay
+        attempts = max(0, self.settings.max_retries)
+        last_exc: Optional[Exception] = None
+        resp: Optional[httpx.Response] = None
+        for attempt in range(attempts + 1):
+            try:
+                resp = await make_request()
+            except httpx.TransportError as exc:
+                last_exc = exc
+                if attempt >= attempts:
+                    raise LabguruError(f"Network error after retries: {exc}") from exc
+                await asyncio.sleep(delay)
+                delay *= 2
+                continue
+            if resp.status_code == 429 or resp.status_code >= 500:
+                if attempt >= attempts:
+                    return resp
+                retry_after = resp.headers.get("Retry-After", "")
+                sleep_for = float(retry_after) if retry_after.isdigit() else delay
+                await asyncio.sleep(sleep_for)
+                delay *= 2
+                continue
+            return resp
+        if resp is not None:
+            return resp
+        raise LabguruError(f"Request failed: {last_exc}")
+
     async def request(
         self,
         method: str,
@@ -111,29 +160,32 @@ class LabguruClient:
         params: Optional[Dict[str, Any]] = None,
         json_body: Optional[Dict[str, Any]] = None,
     ) -> Any:
-        """Authenticated request. Retries once after re-auth on HTTP 401."""
+        """Authenticated request with retry/backoff and one 401 re-auth retry."""
         token = await self.ensure_token()
         method_up = method.upper()
 
-        async def _do(tok: str) -> httpx.Response:
-            p = {k: v for k, v in (params or {}).items() if v is not None}
-            b = dict(json_body or {})
-            if method_up in ("GET", "DELETE"):
-                p["token"] = tok
-            else:
-                b["token"] = tok
-            return await self.http().request(
-                method_up, path, params=p or None, json=b or None
-            )
+        def _make(tok: str) -> Callable[[], Any]:
+            def _do() -> Any:
+                p = {k: v for k, v in (params or {}).items() if v is not None}
+                b = dict(json_body or {})
+                if method_up in ("GET", "DELETE"):
+                    p["token"] = tok
+                else:
+                    b["token"] = tok
+                return self.http().request(
+                    method_up, path, params=p or None, json=b or None
+                )
 
-        resp = await _do(token)
+            return _do
+
+        resp = await self._send_with_retry(_make(token))
         if resp.status_code == 401:
             async with self._lock:
                 self._token = None
             s = self.settings
             if s.login and s.password:
                 token = await self.ensure_token()
-                resp = await _do(token)
+                resp = await self._send_with_retry(_make(token))
             else:
                 raise AuthError(
                     "Authentication failed (401). Token invalid or expired and "
@@ -184,6 +236,7 @@ class LabguruClient:
         *,
         per_page: int = 200,
         limit: Optional[int] = None,
+        params: Optional[Dict[str, Any]] = None,
         **extra: Any,
     ) -> List[Dict[str, Any]]:
         """Fetch all pages and return a flat list.
@@ -191,14 +244,23 @@ class LabguruClient:
         Stops when a page is empty or shorter than ``per_page``. When ``limit``
         is set, stops once that many items are collected (and shrinks the page
         size for small limits to issue a single request).
+
+        Args:
+            params: Extra query params as a dict. Use this for Rails/Kendo-style
+                bracketed keys (e.g. ``sort[0][field]``) that cannot be passed as
+                Python keyword arguments.
+            **extra: Additional simple query params.
         """
+        query = {**(params or {}), **extra}
         if limit is not None and limit < per_page:
             per_page = max(1, limit)
 
         results: List[Dict[str, Any]] = []
         page = 1
         while True:
-            raw = await self.get(path, page=page, per_page=per_page, **extra)
+            raw = await self.request(
+                "GET", path, params={**query, "page": page, "per_page": per_page}
+            )
             batch = extract_list(raw)
             if not batch:
                 break
@@ -209,6 +271,53 @@ class LabguruClient:
                 break
             page += 1
         return results
+
+    async def count(self, path: str, **extra: Any) -> Optional[int]:
+        """Return the total item count for a list endpoint via ``meta=true``.
+
+        Issues a single cheap request. Returns ``None`` if the endpoint does not
+        report a count.
+        """
+        raw = await self.request(
+            "GET", path, params={**extra, "meta": "true", "page": 1, "per_page": 1}
+        )
+        if isinstance(raw, dict):
+            meta = raw.get("meta") or {}
+            if isinstance(meta, dict) and "item_count" in meta:
+                return meta["item_count"]
+        return None
+
+    async def cached_paginate(
+        self,
+        path: str,
+        *,
+        per_page: int = 1000,
+        **extra: Any,
+    ) -> List[Dict[str, Any]]:
+        """Like :meth:`paginate` but caches the full result for ``cache_ttl`` seconds.
+
+        Intended for full-collection fetches reused across scan tools. Bypassed
+        when ``cache_ttl`` is 0. Returns the cached list object directly, so
+        callers must not mutate it in place.
+        """
+        ttl = self.settings.cache_ttl
+        if ttl <= 0:
+            return await self.paginate(path, per_page=per_page, **extra)
+
+        key = (path, tuple(sorted(extra.items())))
+        now = time.monotonic()
+        hit = self._cache.get(key)
+        if hit is not None and (now - hit[0]) < ttl:
+            return hit[1]
+        result = await self.paginate(path, per_page=per_page, **extra)
+        self._cache[key] = (now, result)
+        return result
+
+    def clear_cache(self) -> int:
+        """Drop all cached paginations. Returns the number of entries cleared."""
+        count = len(self._cache)
+        self._cache.clear()
+        return count
 
     async def gather(
         self, coros: List[Any], concurrency: Optional[int] = None

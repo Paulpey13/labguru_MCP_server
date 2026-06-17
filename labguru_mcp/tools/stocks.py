@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from ..app import client, tool
-from ..formatting import slim_stock
+from ..errors import LabguruError
+from ..formatting import kendo_sort, slim_stock
 
 API = "/api/v1"
 
@@ -14,16 +15,23 @@ API = "/api/v1"
 async def list_stocks(
     limit: int = 25, inventory_item_id: Optional[int] = None
 ) -> List[Dict[str, Any]]:
-    """List stock entries, optionally for one inventory item.
+    """List stock entries, most recent first, optionally for one inventory item.
 
     Args:
         limit: Maximum number of stocks to return (default 25).
         inventory_item_id: Restrict to stocks of this inventory item.
     """
-    params: Dict[str, Any] = {}
     if inventory_item_id is not None:
-        params["inventory_item_id"] = inventory_item_id
-    raw = await client.paginate(f"{API}/stocks.json", limit=limit, **params)
+        raw = await client.paginate(
+            f"{API}/stocks.json", limit=limit, inventory_item_id=inventory_item_id
+        )
+    else:
+        try:
+            raw = await client.paginate(
+                f"{API}/stocks.json", limit=limit, params=kendo_sort("id", "desc")
+            )
+        except LabguruError:
+            raw = await client.paginate(f"{API}/stocks.json", limit=limit)
     return [slim_stock(s) for s in raw]
 
 

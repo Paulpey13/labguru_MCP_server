@@ -148,6 +148,9 @@ class Settings:
     timeout: float = 60.0
     max_concurrency: int = 8
     read_only: bool = False
+    cache_ttl: float = 300.0
+    max_retries: int = 3
+    retry_base_delay: float = 0.5
     biocollections: Tuple[str, ...] = DEFAULT_BIOCOLLECTIONS
     direct_inventory: Tuple[str, ...] = DEFAULT_DIRECT_INVENTORY
     cmr_map: Dict[str, Dict[str, str]] = field(default_factory=lambda: dict(DEFAULT_CMR_MAP))
@@ -228,6 +231,9 @@ def load_settings() -> Settings:
         read_only=_as_bool(
             os.environ.get("LABGURU_READ_ONLY", cfg.get("read_only")), default=False
         ),
+        cache_ttl=_num("LABGURU_CACHE_TTL", "cache_ttl", 300.0),
+        max_retries=int(_num("LABGURU_MAX_RETRIES", "max_retries", 3)),
+        retry_base_delay=_num("LABGURU_RETRY_BASE_DELAY", "retry_base_delay", 0.5),
         biocollections=biocollections,
         direct_inventory=direct_inventory,
         cmr_map=cmr_map,

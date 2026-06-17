@@ -9,13 +9,16 @@ plain language.
 Built with `FastMCP` + async `httpx`. Open source under the MIT license, so any
 lab is free to use and adapt it.
 
-- 63 tools across every Labguru domain (experiments, protocols, projects,
-  inventory, stocks, elements, shopping list / PO, reports, companies,
-  instruments, attachments, maintenance, plus CMR and safety helpers).
+- 64 tools + 4 guided prompts across every Labguru domain (experiments,
+  protocols, projects, inventory, stocks, elements, shopping list / PO, reports,
+  companies, instruments, attachments, maintenance, plus CMR and safety helpers).
 - Configurable per instance: domain, custom biocollections, CMR field mapping,
-  timeouts, concurrency.
+  timeouts, concurrency, cache, retries.
 - Two auth modes: personal API token, or email/password (auto re-auth on expiry).
-- Optional read-only mode that hides every write tool.
+- Resilient: retry with exponential backoff on 429/5xx/network errors.
+- Fast: in-memory TTL cache for the scan-heavy tools (repeat scans are instant).
+- Safe: optional read-only mode that hides every write tool; read/write tool
+  annotations let clients auto-approve reads.
 
 ## Architecture
 
@@ -27,6 +30,7 @@ MCP_labguru/
     formatting.py             pure payload-normalising helpers
     errors.py                 typed exceptions
     app.py                    builds settings + client + FastMCP; tool() decorator
+    prompts.py                guided workflow prompts (PO, CMR, duplication)
     __main__.py               python -m labguru_mcp
     tools/                    one module per domain; importing registers tools
       experiments.py  protocols.py  projects.py  inventory.py  stocks.py
@@ -81,6 +85,9 @@ Run the `whoami` tool any time to confirm the active base URL and auth mode
 | `LABGURU_READ_ONLY` | Hide all write tools | `false` |
 | `LABGURU_TIMEOUT` | HTTP timeout (seconds) | `60` |
 | `LABGURU_MAX_CONCURRENCY` | Max concurrent calls in fan-out scans | `8` |
+| `LABGURU_CACHE_TTL` | TTL (s) for the collection cache; `0` disables | `300` |
+| `LABGURU_MAX_RETRIES` | Retries on 429/5xx/network errors | `3` |
+| `LABGURU_RETRY_BASE_DELAY` | Base backoff delay (seconds) | `0.5` |
 | `LABGURU_BIOCOLLECTIONS` | Comma-separated biocollection slugs | built-in list |
 | `LABGURU_DIRECT_INVENTORY` | Comma-separated direct inventory types | built-in list |
 | `LABGURU_CMR_MAP` | JSON: per-collection CMR `risk`/`measure` fields | see below |
@@ -133,7 +140,7 @@ python -m labguru_mcp     # plain stdio server
 
 | Domain | Tools |
 |---|---|
-| Experiments | `list_experiments`, `get_experiment`, `get_experiment_raw`, `get_experiment_samples`, `get_experiment_stock_ids`, `get_experiments_in_range`, `create_experiment`*, `update_experiment`* |
+| Experiments | `list_experiments`, `count_experiments`, `get_experiment`, `get_experiment_raw`, `get_experiment_samples`, `get_experiment_stock_ids`, `get_experiments_in_range`, `create_experiment`*, `update_experiment`* |
 | Protocols | `list_protocols`, `get_protocol`, `search_protocols`, `find_protocols_with_sysid` |
 | Projects | `list_projects`, `get_project`, `list_folders`, `create_project`*, `update_project`* |
 | Inventory | `list_collections`, `list_inventory`, `search_inventory`, `get_inventory_item`, `get_collection_item`, `find_item_by_sysid`, `get_generic_item` |
@@ -147,24 +154,48 @@ python -m labguru_mcp     # plain stdio server
 | Attachments | `list_attachments`, `get_attachment`, `download_attachment`, `upload_attachment`* |
 | Maintenance | `list_maintenance_events` |
 | Cross-resource | `global_search` |
-| Generic / introspection | `api_request`*, `whoami`, `list_capabilities` |
+| Generic / introspection | `api_request`*, `whoami`, `clear_cache`, `list_capabilities` |
 
-`*` = write tool, hidden when `LABGURU_READ_ONLY=true`.
+`*` = write tool, hidden when `LABGURU_READ_ONLY=true`. Every tool also carries
+MCP annotations (`readOnlyHint`, `destructiveHint`) so clients can treat reads
+and writes appropriately.
 
 `api_request` is an escape hatch for any endpoint without a dedicated tool; the
 auth token is injected automatically. `list_capabilities` reports the live
-configuration (collections, CMR map, registered tools).
+configuration (collections, CMR map, cache/retry settings, registered tools).
+`clear_cache` drops the collection cache so the next scan refetches fresh data.
+
+## Prompts
+
+Guided, parameterised workflows the client can launch (they orchestrate the
+tools above; they do not call the API directly):
+
+| Prompt | Purpose |
+|---|---|
+| `generate_purchase_order(order_number)` | Review a PO, check approvals, summarise totals, optionally create the report |
+| `cmr_report(start_id, end_id)` | Cross-reference CMR products against an experiment ID range |
+| `duplicate_experiment(experiment_id)` | Inspect an experiment and plan its duplication |
+| `safety_data_sheets(collections)` | Collect safety data sheet (fiche de securite) links |
 
 ## Notes
 
 - List tools return slim summaries to keep payloads small; use the matching
   `get_*` / `*_raw` tool for the full JSON of a single record.
+- `list_experiments`, `list_protocols`, and `list_stocks` return the most recent
+  records first (server-side sort via the Kendo grid syntax, since plain
+  `sort`/`direction` params are rejected by Labguru). Pass `oldest_first=true`
+  to reverse. Use `count_experiments` for the true total without fetching every
+  page (instances can hold tens of thousands of records).
 - Pagination is handled internally (`page` / `per_page`), stopping when a page
   is empty or shorter than the page size. Wrapped responses (`value`, `data`,
   ...) are unwrapped automatically.
 - Fan-out scans (`get_experiments_in_range`, `find_protocols_with_sysid`,
   `find_item_by_sysid`, `get_cmr_items`, `get_safety_links`, `global_search`)
-  use bounded concurrency and can be slow on large instances.
+  use bounded concurrency and can be slow on large instances. Full-collection
+  fetches are cached for `LABGURU_CACHE_TTL` seconds, so repeat scans within a
+  session are near-instant; call `clear_cache` after a write to force a refresh.
+- Requests retry automatically on 429/5xx/network errors with exponential
+  backoff (honouring `Retry-After`), and re-authenticate once on HTTP 401.
 - The server never writes to stdout (it would corrupt the JSON-RPC stream);
   warnings go to stderr.
 

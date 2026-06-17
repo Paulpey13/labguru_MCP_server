@@ -46,7 +46,7 @@ async def global_search(query: str, limit_per_type: int = 10) -> Dict[str, Any]:
     async def _inventory() -> List[Dict[str, Any]]:
         async def _scan(col: str) -> List[Dict[str, Any]]:
             try:
-                raw = await client.paginate(settings.inventory_path(col), per_page=1000)
+                raw = await client.cached_paginate(settings.inventory_path(col), per_page=1000)
             except LabguruError:
                 return []
             return [

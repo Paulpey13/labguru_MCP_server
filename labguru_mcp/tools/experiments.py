@@ -9,29 +9,68 @@ from ..errors import LabguruError
 from ..formatting import (
     experiment_procedures,
     iter_experiment_rows,
+    kendo_sort,
     slim_experiment,
 )
 
 API = "/api/v1"
 
+# A project rarely holds more than this many experiments; cap the window we sort
+# client-side when filtering by project (server-side sort + filter is unsupported).
+_PROJECT_WINDOW = 1000
+
 
 @tool()
 async def list_experiments(
-    limit: int = 20, project_id: Optional[int] = None
+    limit: int = 20, project_id: Optional[int] = None, oldest_first: bool = False
 ) -> List[Dict[str, Any]]:
-    """List experiments, optionally filtered by project.
+    """List experiments, most recent first by default.
 
     Args:
         limit: Maximum number of experiments to return (default 20).
         project_id: Restrict to a single project when provided.
+        oldest_first: Return oldest first instead of most recent.
 
     Returns slim records: id, title, start_date, project_id, uuid, owner.
     """
-    params: Dict[str, Any] = {}
+    direction = "asc" if oldest_first else "desc"
+
+    if project_id is None:
+        # Server-side recency sort: page 1 already holds the newest records.
+        try:
+            raw = await client.paginate(
+                f"{API}/experiments.json",
+                limit=limit,
+                params=kendo_sort("id", direction),
+            )
+        except LabguruError:
+            raw = await client.paginate(f"{API}/experiments.json", limit=limit)
+        return [slim_experiment(e) for e in raw]
+
+    # Project filter and server-side sort cannot be combined, so fetch a bounded
+    # window for the project and sort it client-side.
+    window = await client.paginate(
+        f"{API}/experiments.json", limit=_PROJECT_WINDOW, project_id=project_id
+    )
+    window.sort(key=lambda e: e.get("id") or 0, reverse=not oldest_first)
+    return [slim_experiment(e) for e in window[:limit]]
+
+
+@tool()
+async def count_experiments(project_id: Optional[int] = None) -> Dict[str, Any]:
+    """Return the total number of experiments (optionally within a project).
+
+    Uses a single cheap metadata request, so it works even on instances with
+    tens of thousands of experiments without fetching them all.
+
+    Args:
+        project_id: Restrict the count to a single project when provided.
+    """
+    extra: Dict[str, Any] = {}
     if project_id is not None:
-        params["project_id"] = project_id
-    raw = await client.paginate(f"{API}/experiments.json", limit=limit, **params)
-    return [slim_experiment(e) for e in raw]
+        extra["project_id"] = project_id
+    total = await client.count(f"{API}/experiments.json", **extra)
+    return {"count": total, "project_id": project_id}
 
 
 @tool()

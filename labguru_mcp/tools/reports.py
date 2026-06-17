@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from ..app import client, tool
+from ..errors import LabguruError
+from ..formatting import kendo_sort
 
 API = "/api/v1"
 
@@ -16,9 +18,12 @@ async def list_reports(limit: int = 25) -> List[Dict[str, Any]]:
     Args:
         limit: Maximum number of reports to return (default 25).
     """
-    raw = await client.paginate(
-        f"{API}/reports.json", limit=limit, sort="created_at", direction="desc"
-    )
+    try:
+        raw = await client.paginate(
+            f"{API}/reports.json", limit=limit, params=kendo_sort("id", "desc")
+        )
+    except LabguruError:
+        raw = await client.paginate(f"{API}/reports.json", limit=limit)
     return [
         {
             "id": r.get("id"),

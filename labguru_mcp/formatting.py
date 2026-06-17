@@ -27,6 +27,16 @@ def extract_list(response: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def kendo_sort(field: str = "id", direction: str = "desc") -> Dict[str, Any]:
+    """Build Kendo-style sort query params accepted by Labguru list endpoints.
+
+    Labguru rejects plain ``sort``/``direction`` params (HTTP 500) but honours
+    the Kendo grid syntax. Higher IDs are more recent, so ``id`` desc yields the
+    newest records first without scanning every page.
+    """
+    return {"kendo": "true", "sort[0][field]": field, "sort[0][dir]": direction}
+
+
 def safe_num(value: Any, default: float = 0.0) -> float:
     """Convert ``value`` to float, returning ``default`` on failure."""
     if value is None:

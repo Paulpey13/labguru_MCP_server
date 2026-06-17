@@ -15,6 +15,17 @@ from ..formatting import extract_list, item_sys_id, slim_inventory
 API = "/api/v1"
 
 
+def _validate_collection(collection: str) -> str:
+    """Return the collection unchanged, or raise with the list of valid slugs."""
+    if collection in settings.all_collections:
+        return collection
+    valid = ", ".join(settings.all_collections)
+    raise LabguruError(
+        f"Unknown collection '{collection}'. Configured collections: {valid}. "
+        "Set LABGURU_BIOCOLLECTIONS / LABGURU_DIRECT_INVENTORY to add custom ones."
+    )
+
+
 def _collections_arg(collections: Optional[str], default: List[str]) -> List[str]:
     if collections:
         return [c.strip() for c in collections.split(",") if c.strip()]
@@ -49,6 +60,7 @@ async def list_inventory(
             culture, plasmids, primers, sirna, taqman, crispr, mrna, rodents).
         limit: Maximum number of items to return (default 25).
     """
+    _validate_collection(collection)
     raw = await client.paginate(settings.inventory_path(collection), limit=limit)
     return [slim_inventory(i, collection) for i in raw]
 
@@ -66,11 +78,13 @@ async def search_inventory(
         limit: Maximum matches to return (default 50).
     """
     q = query.lower()
+    if collection:
+        _validate_collection(collection)
     targets = [collection] if collection else list(settings.all_collections)
 
     async def _scan(col: str) -> List[Dict[str, Any]]:
         try:
-            raw = await client.paginate(settings.inventory_path(col), per_page=1000)
+            raw = await client.cached_paginate(settings.inventory_path(col), per_page=1000)
         except LabguruError:
             return []
         return [slim_inventory(i, col) for i in raw if q in (i.get("name") or "").lower()]
@@ -101,6 +115,7 @@ async def get_collection_item(collection: str, item_id: int) -> Dict[str, Any]:
         collection: Collection slug (e.g. biochemistry, antibodies).
         item_id: Numeric item ID.
     """
+    _validate_collection(collection)
     if collection in settings.direct_inventory:
         return await client.get(f"{API}/{collection}/{item_id}.json")
     return await client.get(f"{API}/biocollections/{collection}/{item_id}.json")
@@ -119,7 +134,7 @@ async def find_item_by_sysid(sysid: str) -> Optional[Dict[str, Any]]:
 
     async def _scan(col: str) -> Optional[Dict[str, Any]]:
         try:
-            raw = await client.paginate(settings.inventory_path(col), per_page=1000)
+            raw = await client.cached_paginate(settings.inventory_path(col), per_page=1000)
         except LabguruError:
             return None
         for i in raw:
@@ -134,18 +149,10 @@ async def find_item_by_sysid(sysid: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-@tool()
-async def get_cmr_items(collections: Optional[str] = None) -> List[Dict[str, Any]]:
-    """List inventory items flagged as CMR (with risk classification fields filled).
+async def collect_cmr_items(collections: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return CMR-flagged inventory items. Shared by the tool and the CMR report.
 
     The CMR custom-field mapping per collection is configurable (LABGURU_CMR_MAP).
-    Defaults: biochemistry custom5/custom6; culture and sp_bioch custom3/custom4.
-
-    Args:
-        collections: Comma-separated collection slugs to scan. Defaults to the
-            collections present in the configured CMR map.
-
-    Returns items with name, sys_id, collection, type_of_risk, preventive_measure.
     """
     cmr_map = settings.cmr_map
     targets = _collections_arg(collections, list(cmr_map.keys()))
@@ -154,7 +161,7 @@ async def get_cmr_items(collections: Optional[str] = None) -> List[Dict[str, Any
         mapping = cmr_map.get(col, {"risk": "custom5", "measure": "custom6"})
         risk_field, measure_field = mapping["risk"], mapping["measure"]
         try:
-            raw = await client.paginate(settings.inventory_path(col), per_page=1000)
+            raw = await client.cached_paginate(settings.inventory_path(col), per_page=1000)
         except LabguruError:
             return []
         found = []
@@ -182,6 +189,22 @@ async def get_cmr_items(collections: Optional[str] = None) -> List[Dict[str, Any
 
 
 @tool()
+async def get_cmr_items(collections: Optional[str] = None) -> List[Dict[str, Any]]:
+    """List inventory items flagged as CMR (with risk classification fields filled).
+
+    The CMR custom-field mapping per collection is configurable (LABGURU_CMR_MAP).
+    Defaults: biochemistry custom5/custom6; culture and sp_bioch custom3/custom4.
+
+    Args:
+        collections: Comma-separated collection slugs to scan. Defaults to the
+            collections present in the configured CMR map.
+
+    Returns items with name, sys_id, collection, type_of_risk, preventive_measure.
+    """
+    return await collect_cmr_items(collections)
+
+
+@tool()
 async def get_safety_links(collections: Optional[str] = None) -> List[Dict[str, Any]]:
     """Return name + web page URL for inventory items that have a link (safety data sheets).
 
@@ -195,7 +218,7 @@ async def get_safety_links(collections: Optional[str] = None) -> List[Dict[str, 
 
     async def _scan(col: str) -> List[Dict[str, Any]]:
         try:
-            raw = await client.paginate(settings.inventory_path(col), per_page=1000)
+            raw = await client.cached_paginate(settings.inventory_path(col), per_page=1000)
         except LabguruError:
             return []
         links = []

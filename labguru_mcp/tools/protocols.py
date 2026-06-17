@@ -7,18 +7,26 @@ from typing import Any, Dict, List, Optional
 
 from ..app import client, tool
 from ..errors import LabguruError
+from ..formatting import kendo_sort
 
 API = "/api/v1"
 
 
 @tool()
-async def list_protocols(limit: int = 20) -> List[Dict[str, Any]]:
-    """List protocols.
+async def list_protocols(limit: int = 20, oldest_first: bool = False) -> List[Dict[str, Any]]:
+    """List protocols, most recent first by default.
 
     Args:
         limit: Maximum number of protocols to return (default 20).
+        oldest_first: Return oldest first instead of most recent.
     """
-    raw = await client.paginate(f"{API}/protocols.json", limit=limit)
+    direction = "asc" if oldest_first else "desc"
+    try:
+        raw = await client.paginate(
+            f"{API}/protocols.json", limit=limit, params=kendo_sort("id", direction)
+        )
+    except LabguruError:
+        raw = await client.paginate(f"{API}/protocols.json", limit=limit)
     return [{"id": p.get("id"), "name": p.get("name"), "uuid": p.get("uuid")} for p in raw]
 
 

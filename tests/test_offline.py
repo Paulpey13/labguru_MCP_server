@@ -23,6 +23,12 @@ def test_extract_list_variants():
     assert formatting.extract_list("not a list") == []
 
 
+def test_kendo_sort():
+    s = formatting.kendo_sort("id", "desc")
+    assert s == {"kendo": "true", "sort[0][field]": "id", "sort[0][dir]": "desc"}
+    assert formatting.kendo_sort()["sort[0][dir]"] == "desc"
+
+
 def test_safe_num():
     assert formatting.safe_num("3.5") == 3.5
     assert formatting.safe_num(None) == 0.0

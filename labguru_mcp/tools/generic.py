@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from .. import __version__
 from ..app import client, mcp, settings, tool
 
 API = "/api/v1"
+
+HttpMethod = Literal["GET", "POST", "PUT", "DELETE"]
 
 
 @tool()
@@ -20,9 +22,9 @@ async def get_generic_item(item_id: int) -> Dict[str, Any]:
     return await client.get(f"{API}/generics/{item_id}.json")
 
 
-@tool(write=True)
+@tool(write=True, destructive=True)
 async def api_request(
-    method: str,
+    method: HttpMethod,
     path: str,
     params: Optional[Dict[str, Any]] = None,
     body: Optional[Dict[str, Any]] = None,
@@ -64,6 +66,16 @@ async def whoami() -> Dict[str, Any]:
 
 
 @tool()
+async def clear_cache() -> Dict[str, Any]:
+    """Drop the in-memory collection cache so the next scan refetches fresh data.
+
+    Use after writing data if you need scan tools (search_inventory, get_cmr_items,
+    get_safety_links, ...) to reflect the change before the cache TTL expires.
+    """
+    return {"cleared_entries": client.clear_cache()}
+
+
+@tool()
 async def list_capabilities() -> Dict[str, Any]:
     """List the server's configured collections, CMR mapping, and registered tools.
 
@@ -77,6 +89,8 @@ async def list_capabilities() -> Dict[str, Any]:
         "cmr_map": settings.cmr_map,
         "read_only": settings.read_only,
         "max_concurrency": settings.max_concurrency,
+        "cache_ttl": settings.cache_ttl,
+        "max_retries": settings.max_retries,
         "tool_count": len(tools),
         "tools": sorted(t.name for t in tools),
     }

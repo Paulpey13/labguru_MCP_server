@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from ..app import client, tool
 from ..formatting import financial_summary, slim_shopping
 
 API = "/api/v1"
 
+OrderStatus = Literal["all", "pending", "approved", "submitted"]
+
 
 async def _all_items() -> List[Dict[str, Any]]:
-    return await client.paginate(f"{API}/shopping_list.json", per_page=200)
+    return await client.cached_paginate(f"{API}/shopping_list.json", per_page=200)
 
 
 @tool()
 async def list_shopping_items(
-    status: str = "all", limit: int = 50
+    status: OrderStatus = "all", limit: int = 50
 ) -> List[Dict[str, Any]]:
     """List shopping list items, optionally filtered by status.
 
