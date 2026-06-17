@@ -144,7 +144,7 @@ python -m labguru_mcp     # plain stdio server
 | Protocols | `list_protocols`, `get_protocol`, `search_protocols`, `find_protocols_with_sysid` |
 | Projects | `list_projects`, `get_project`, `list_folders`, `create_project`*, `update_project`* |
 | Inventory | `list_collections`, `list_inventory`, `search_inventory`, `get_inventory_item`, `get_collection_item`, `find_item_by_sysid`, `get_generic_item` |
-| CMR / Safety | `get_cmr_items`, `get_safety_links` |
+| CMR / Safety | `get_cmr_items`, `get_safety_links`, `cmr_experiment_report` |
 | Stocks | `list_stocks`, `get_stock`, `get_stock_by_barcode`, `create_stock`*, `update_stock`* |
 | Elements / UUID | `get_element`, `get_element_by_uuid`, `get_element_rows`, `resolve_uuid`, `list_sections`, `update_element`*, `create_element`*, `create_section`* |
 | Shopping / PO | `list_shopping_items`, `get_order`, `get_order_summary`, `get_last_order`, `add_shopping_item`* |

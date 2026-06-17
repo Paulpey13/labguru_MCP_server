@@ -68,6 +68,43 @@ def test_shopping_status():
     assert formatting.shopping_status({}) == "pending"
 
 
+def test_collect_values():
+    data = {
+        "headers": {"x": [{"attribute": "auto_name"}]},
+        "samples": [
+            {"stocks": [{"auto_name": "BI-23.0009", "name": "DMSO"}]},
+            {"cultures": [{"auto_name": "CU-23.0097"}, {"auto_name": ""}]},
+        ],
+    }
+    assert formatting.collect_values(data, "auto_name") == {"BI-23.0009", "CU-23.0097"}
+    assert formatting.collect_values({}, "auto_name") == set()
+
+
+def test_parse_sample_entries():
+    data = {
+        "samples": [
+            {
+                "name": "PFA 4%",
+                "collection_name": "SP BIOCHes",
+                "itemsKey": "stocks",
+                "saved_stocks_ids": [31690],
+                "stocks": [
+                    {"id": 31690, "name": "PFA", "lot": "L1", "expiration_date": "2027-01-01",
+                     "auto_name": "SB-23.0002"}
+                ],
+            },
+            "not-a-dict",
+        ]
+    }
+    rows = formatting.parse_sample_entries(data)
+    assert len(rows) == 1
+    assert rows[0]["name"] == "PFA 4%"
+    assert rows[0]["sys_id"] == "SB-23.0002"
+    assert rows[0]["stock_ids"] == [31690]
+    assert rows[0]["stocks"][0]["lot"] == "L1"
+    assert formatting.parse_sample_entries({}) == []
+
+
 def test_iter_experiment_rows():
     exp = {
         "experiment_procedures": [

@@ -37,6 +37,29 @@ def kendo_sort(field: str = "id", direction: str = "desc") -> Dict[str, Any]:
     return {"kendo": "true", "sort[0][field]": field, "sort[0][dir]": direction}
 
 
+def collect_values(obj: Any, key: str) -> set:
+    """Recursively collect every non-empty string value stored under ``key``.
+
+    Used to pull sample sys_ids (the ``auto_name`` attribute) out of the nested
+    JSON of a Labguru samples element, independent of the exact table layout.
+    """
+    found: set = set()
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == key and isinstance(v, str) and v.strip():
+                    found.add(v.strip())
+                else:
+                    _walk(v)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(obj)
+    return found
+
+
 def safe_num(value: Any, default: float = 0.0) -> float:
     """Convert ``value`` to float, returning ``default`` on failure."""
     if value is None:
@@ -143,6 +166,47 @@ def financial_summary(items: List[Dict[str, Any]]) -> Dict[str, float]:
         "additional_expenses": round(extras, 2),
         "grand_total": round(subtotal + delivery + dry_ice + extras, 2),
     }
+
+
+def parse_sample_entries(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Parse the ``data`` payload of a samples element into structured rows.
+
+    A samples element stores its table as a JSON string under ``data``. Each
+    entry in ``data["samples"]`` describes one inventory item used, with its
+    sys_id under an ``auto_name`` field and the linked stock vials under the key
+    named by ``itemsKey`` (and listed in ``saved_stocks_ids``).
+    """
+    out: List[Dict[str, Any]] = []
+    if not isinstance(data, dict):
+        return out
+    for entry in data.get("samples") or []:
+        if not isinstance(entry, dict):
+            continue
+        items_key = entry.get("itemsKey")
+        items = entry.get(items_key) if isinstance(entry.get(items_key), list) else []
+        autos = sorted(collect_values(entry, "auto_name"))
+        stock_ids = entry.get("saved_stocks_ids")
+        if not isinstance(stock_ids, list) or not stock_ids:
+            stock_ids = [it.get("id") for it in items if isinstance(it, dict) and it.get("id")]
+        out.append(
+            {
+                "name": entry.get("name"),
+                "sys_id": autos[0] if autos else None,
+                "collection": entry.get("collection_name"),
+                "stock_ids": [s for s in stock_ids if isinstance(s, int)],
+                "stocks": [
+                    {
+                        "stock_id": it.get("id"),
+                        "name": it.get("name"),
+                        "lot": it.get("lot"),
+                        "expiration_date": it.get("expiration_date"),
+                    }
+                    for it in items
+                    if isinstance(it, dict)
+                ],
+            }
+        )
+    return out
 
 
 def iter_experiment_rows(exp: Dict[str, Any]) -> List[Dict[str, Any]]:

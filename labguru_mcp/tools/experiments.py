@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional
 
 from ..app import client, tool
 from ..errors import LabguruError
 from ..formatting import (
     experiment_procedures,
-    iter_experiment_rows,
     kendo_sort,
+    parse_sample_entries,
     slim_experiment,
 )
 
@@ -18,6 +19,47 @@ API = "/api/v1"
 # A project rarely holds more than this many experiments; cap the window we sort
 # client-side when filtering by project (server-side sort + filter is unsupported).
 _PROJECT_WINDOW = 1000
+
+
+def _samples_element_ids(exp: Dict[str, Any]) -> List[int]:
+    """Return the numeric IDs of every ``samples`` element in an experiment."""
+    ids: List[int] = []
+    for wrapper in exp.get("experiment_procedures") or []:
+        proc = wrapper.get("experiment_procedure", wrapper)
+        for el in proc.get("elements") or []:
+            if el.get("element_type") == "samples" and el.get("id"):
+                ids.append(el["id"])
+    return ids
+
+
+async def _element_data(element_id: int) -> Optional[Dict[str, Any]]:
+    """Fetch an element and return its parsed ``data`` payload (JSON string)."""
+    try:
+        el = await client.get(f"{API}/elements/{element_id}.json")
+    except LabguruError:
+        return None
+    data = el.get("data") if isinstance(el, dict) else None
+    if isinstance(data, str):
+        try:
+            return json.loads(data)
+        except ValueError:
+            return None
+    return data if isinstance(data, dict) else None
+
+
+async def experiment_samples(exp: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Fetch and parse all sample rows for an already-fetched experiment dict.
+
+    Sample tables are not embedded in the experiment JSON; each ``samples``
+    element is fetched via /api/v1/elements/{id}.json and its ``data`` parsed.
+    """
+    element_ids = _samples_element_ids(exp)
+    datasets = await client.gather([_element_data(eid) for eid in element_ids])
+    samples: List[Dict[str, Any]] = []
+    for data in datasets:
+        if isinstance(data, dict):
+            samples.extend(parse_sample_entries(data))
+    return samples
 
 
 @tool()
@@ -103,12 +145,15 @@ async def get_experiment_samples(
 ) -> List[Dict[str, Any]]:
     """Extract all sample/reagent rows used across an experiment's procedures.
 
+    Each row has: name, sys_id, collection, stock_ids, and stocks (per-vial
+    stock_id, lot, expiration_date).
+
     Args:
         experiment_id: Numeric Labguru experiment ID.
         limit: Maximum number of sample rows to return (default 200).
     """
     exp = await client.get(f"{API}/experiments/{experiment_id}.json")
-    return iter_experiment_rows(exp)[:limit]
+    return (await experiment_samples(exp))[:limit]
 
 
 @tool()
@@ -121,13 +166,8 @@ async def get_experiment_stock_ids(experiment_id: int) -> List[int]:
         experiment_id: Numeric Labguru experiment ID.
     """
     exp = await client.get(f"{API}/experiments/{experiment_id}.json")
-    ids: set[int] = set()
-    for item in iter_experiment_rows(exp):
-        if item.get("stock_id"):
-            try:
-                ids.add(int(item["stock_id"]))
-            except (TypeError, ValueError):
-                pass
+    samples = await experiment_samples(exp)
+    ids = {sid for s in samples for sid in s.get("stock_ids", [])}
     return sorted(ids)
 
 
