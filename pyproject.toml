@@ -15,22 +15,42 @@ authors = [
 ]
 keywords = ["labguru", "mcp", "model-context-protocol", "eln", "lims", "laboratory"]
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
     "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
 ]
 dependencies = [
     "mcp[cli]>=1.2.0",
     "httpx>=0.27.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.5",
+]
+
 [project.urls]
-Homepage = "https://github.com/neuro-sys/labguru-mcp"
-Repository = "https://github.com/neuro-sys/labguru-mcp"
+Homepage = "https://github.com/Paulpey13/labguru_MCP_server"
+Repository = "https://github.com/Paulpey13/labguru_MCP_server"
+Issues = "https://github.com/Paulpey13/labguru_MCP_server/issues"
 
 [project.scripts]
 labguru-mcp = "labguru_mcp.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["labguru_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

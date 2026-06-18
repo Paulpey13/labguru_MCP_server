@@ -50,14 +50,21 @@ registers it.
 
 ## Install
 
+Requires Python 3.10+. Installing the package puts a `labguru-mcp` command on
+your PATH, which is all an MCP client needs.
+
 ```bash
-cd MCP_labguru
-pip install -e .          # installs deps and the `labguru-mcp` command
-# or, without installing the package:
-pip install -r requirements.txt
+# from source
+git clone https://github.com/Paulpey13/labguru_MCP_server
+cd labguru_MCP_server
+pip install .
 ```
 
-Requires Python 3.10+.
+For development, install the editable package with test/lint extras:
+
+```bash
+pip install -e ".[dev]"
+```
 
 ## Configure
 
@@ -93,6 +100,7 @@ Run the `whoami` tool any time to confirm the active base URL and auth mode
 | `LABGURU_DIRECT_INVENTORY` | Comma-separated direct inventory types | built-in list |
 | `LABGURU_CMR_MAP` | JSON: per-collection CMR `risk`/`measure` fields | see below |
 | `LABGURU_CONFIG` | Path to a JSON config file | `labguru.config.json` |
+| `LABGURU_DEBUG` | Enable verbose HTTP logs (logs include the token) | `false` |
 
 Adapting to your lab: if your instance uses different custom fields for CMR risk
 classification, or has extra custom biocollections, set `LABGURU_CMR_MAP` and
@@ -108,33 +116,39 @@ classification, or has extra custom biocollections, set `LABGURU_CMR_MAP` and
 
 ## Run
 
-Register the server with your MCP client. A ready-made `.mcp.json` for Claude
-Code is included:
+The server speaks stdio; your MCP client launches it. After `pip install`, the
+included `.mcp.json` works as-is (it just runs the `labguru-mcp` command):
 
 ```json
 {
   "mcpServers": {
     "labguru": {
       "type": "stdio",
-      "command": "python",
-      "args": ["C:/Users/Paul/Documents/code/LABGURU/MCP_labguru/mcp_server.py"],
+      "command": "labguru-mcp",
+      "args": [],
       "env": {}
     }
   }
 }
 ```
 
-If you installed the package you can use the console script instead:
+**Claude Code** — register it once (reads credentials from your `.env`):
 
-```json
-{ "mcpServers": { "labguru": { "type": "stdio", "command": "labguru-mcp" } } }
+```bash
+claude mcp add labguru -- labguru-mcp
 ```
+
+**Claude Desktop** — add the same `mcpServers` block to
+`claude_desktop_config.json` and restart the app.
+
+You can also pass credentials inline via the config's `env` block instead of a
+`.env` file, e.g. `"env": { "LABGURU_TOKEN": "..." }`.
 
 For local development / inspection:
 
 ```bash
-mcp dev mcp_server.py     # MCP Inspector UI
 python -m labguru_mcp     # plain stdio server
+mcp dev -m labguru_mcp    # MCP Inspector UI
 ```
 
 ## Tools

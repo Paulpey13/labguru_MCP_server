@@ -7,7 +7,7 @@ so they are easy to unit test and reuse.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List
 
 from .config import WRAPPER_KEYS
 

@@ -2,10 +2,8 @@
   "mcpServers": {
     "labguru": {
       "type": "stdio",
-      "command": "python",
-      "args": [
-        "C:/Users/Paul/Documents/code/LABGURU/MCP_labguru/mcp_server.py"
-      ],
+      "command": "labguru-mcp",
+      "args": [],
       "env": {}
     }
   }

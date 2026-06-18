@@ -294,14 +294,63 @@ class LabguruClient:
                 return meta["item_count"]
         return None
 
+    async def paginate_all(
+        self,
+        path: str,
+        *,
+        per_page: int = 200,
+        **extra: Any,
+    ) -> List[Dict[str, Any]]:
+        """Fetch every page of a list endpoint, in parallel when possible.
+
+        Requests the first page with ``meta=true`` to learn the total page
+        count, then fetches the remaining pages concurrently. Falls back to
+        sequential pagination when the endpoint does not report ``page_count``.
+        """
+        first = await self.request(
+            "GET", path, params={**extra, "meta": "true", "page": 1, "per_page": per_page}
+        )
+        batch = extract_list(first)
+        results: List[Dict[str, Any]] = list(batch)
+        meta = first.get("meta") if isinstance(first, dict) else None
+
+        if not isinstance(meta, dict):
+            # Endpoint has no usable meta: fall back to sequential paging.
+            return await self.paginate(path, per_page=per_page, **extra)
+        if not batch:
+            return results
+
+        # The server may cap per_page; use the page size it actually returned so
+        # subsequent page numbers line up, and recompute the page count from it.
+        page_size = meta.get("page_size") or len(batch)
+        item_count = meta.get("item_count")
+        if isinstance(item_count, int) and page_size:
+            page_count = -(-item_count // page_size)  # ceil division
+        else:
+            page_count = meta.get("page_count")
+        if not isinstance(page_count, int) or page_count <= 1:
+            return results
+
+        async def _page(p: int) -> List[Dict[str, Any]]:
+            raw = await self.request(
+                "GET", path, params={**extra, "meta": "true", "page": p, "per_page": page_size}
+            )
+            return extract_list(raw)
+
+        pages = await self.gather([_page(p) for p in range(2, page_count + 1)])
+        for r in pages:
+            if isinstance(r, list):
+                results.extend(r)
+        return results
+
     async def cached_paginate(
         self,
         path: str,
         *,
-        per_page: int = 1000,
+        per_page: int = 200,
         **extra: Any,
     ) -> List[Dict[str, Any]]:
-        """Like :meth:`paginate` but caches the full result for ``cache_ttl`` seconds.
+        """Like :meth:`paginate_all` but caches the full result for ``cache_ttl`` seconds.
 
         Intended for full-collection fetches reused across scan tools. Bypassed
         when ``cache_ttl`` is 0. Returns the cached list object directly, so
@@ -309,14 +358,14 @@ class LabguruClient:
         """
         ttl = self.settings.cache_ttl
         if ttl <= 0:
-            return await self.paginate(path, per_page=per_page, **extra)
+            return await self.paginate_all(path, per_page=per_page, **extra)
 
         key = (path, tuple(sorted(extra.items())))
         now = time.monotonic()
         hit = self._cache.get(key)
         if hit is not None and (now - hit[0]) < ttl:
             return hit[1]
-        result = await self.paginate(path, per_page=per_page, **extra)
+        result = await self.paginate_all(path, per_page=per_page, **extra)
         self._cache[key] = (now, result)
         return result
 

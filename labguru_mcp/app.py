@@ -13,6 +13,8 @@ server runs in read-only mode (``LABGURU_READ_ONLY=true``), tools marked
 from __future__ import annotations
 
 import functools
+import logging
+import os
 import sys
 from typing import Any, Callable
 
@@ -21,6 +23,13 @@ from mcp.types import ToolAnnotations
 
 from .client import LabguruClient
 from .config import Settings, load_settings
+
+# Security: Labguru auth uses a ?token= query param, which httpx would otherwise
+# log at INFO level (leaking the token to stderr). Silence the HTTP loggers
+# unless the operator explicitly opts into debug logging.
+if os.environ.get("LABGURU_DEBUG", "").strip().lower() not in ("1", "true", "yes", "on"):
+    for _name in ("httpx", "httpcore"):
+        logging.getLogger(_name).setLevel(logging.WARNING)
 
 settings: Settings = load_settings()
 client: LabguruClient = LabguruClient(settings)
