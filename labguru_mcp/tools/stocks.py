@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from ..app import client, tool
@@ -9,6 +10,23 @@ from ..errors import LabguruError
 from ..formatting import kendo_sort, slim_stock
 
 API = "/api/v1"
+
+
+def _parse_date(value: Any) -> Optional[date]:
+    """Parse a Labguru date string ('YYYY-MM-DD' optionally with time)."""
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return datetime.strptime(value[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _location_name(stock: Dict[str, Any]) -> Optional[str]:
+    loc = stock.get("storage_location") or stock.get("location")
+    if isinstance(loc, dict):
+        return loc.get("name")
+    return loc
 
 
 @tool()
@@ -60,6 +78,61 @@ async def get_stock_by_barcode(barcode: str) -> Optional[Dict[str, Any]]:
     if isinstance(data, list):
         return data[0] if data else None
     return data
+
+
+@tool()
+async def expiring_stocks(
+    within_days: int = 30, include_expired: bool = False, limit: int = 100
+) -> Dict[str, Any]:
+    """List stocks whose expiration date is near (or past).
+
+    Scans the full stock list (cached) and filters by expiration_date. On large
+    instances the first scan is slow; subsequent calls hit the cache.
+
+    Args:
+        within_days: Flag stocks expiring within this many days from today
+            (default 30).
+        include_expired: Also include stocks that already expired.
+        limit: Maximum stocks to return (default 100), soonest first.
+
+    Returns a summary with today, within_days, scanned, expired_count,
+    expiring_count, and stocks (stock_id, name, lot, expiration_date, days_left,
+    location).
+    """
+    raw = await client.cached_paginate(f"{API}/stocks.json", per_page=1000)
+    today = date.today()
+    found: List[Dict[str, Any]] = []
+    expired_count = 0
+    for s in raw:
+        exp = _parse_date(s.get("expiration_date"))
+        if exp is None:
+            continue
+        days_left = (exp - today).days
+        if days_left < 0:
+            expired_count += 1
+            if not include_expired:
+                continue
+        elif days_left > within_days:
+            continue
+        found.append(
+            {
+                "stock_id": s.get("id"),
+                "name": s.get("name") or s.get("content_name"),
+                "lot": s.get("lot"),
+                "expiration_date": s.get("expiration_date"),
+                "days_left": days_left,
+                "location": _location_name(s),
+            }
+        )
+    found.sort(key=lambda r: r["days_left"])
+    return {
+        "today": today.isoformat(),
+        "within_days": within_days,
+        "scanned": len(raw),
+        "expired_count": expired_count,
+        "expiring_count": len(found),
+        "stocks": found[:limit],
+    }
 
 
 @tool(write=True)

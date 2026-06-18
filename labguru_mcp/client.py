@@ -41,6 +41,7 @@ class LabguruClient:
         self._http: Optional[httpx.AsyncClient] = None
         self._transport = transport
         self._cache: Dict[Tuple[Any, ...], Tuple[float, List[Dict[str, Any]]]] = {}
+        self._obj_cache: Dict[Tuple[Any, ...], Tuple[float, Any]] = {}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -257,6 +258,10 @@ class LabguruClient:
 
         results: List[Dict[str, Any]] = []
         page = 1
+        # The API may silently cap per_page (e.g. stocks at 100). Detect the
+        # effective page size from the first page instead of trusting per_page,
+        # otherwise a capped first page looks like the last page.
+        page_size: Optional[int] = None
         while True:
             raw = await self.request(
                 "GET", path, params={**query, "page": page, "per_page": per_page}
@@ -267,7 +272,9 @@ class LabguruClient:
             results.extend(batch)
             if limit is not None and len(results) >= limit:
                 return results[:limit]
-            if len(batch) < per_page:
+            if page_size is None:
+                page_size = len(batch)
+            if len(batch) < page_size:
                 break
             page += 1
         return results
@@ -313,10 +320,33 @@ class LabguruClient:
         self._cache[key] = (now, result)
         return result
 
+    async def cached_get(self, path: str, **params: Any) -> Any:
+        """Like :meth:`get` but caches the parsed response for ``cache_ttl`` seconds.
+
+        Intended for immutable-ish single resources fetched repeatedly across a
+        report (experiment details, samples elements). Bypassed when
+        ``cache_ttl`` is 0.
+        """
+        ttl = self.settings.cache_ttl
+        if ttl <= 0:
+            return await self.get(path, **params)
+        key = ("GET", path, tuple(sorted(params.items())))
+        now = time.monotonic()
+        hit = self._obj_cache.get(key)
+        if hit is not None and (now - hit[0]) < ttl:
+            return hit[1]
+        value = await self.get(path, **params)
+        self._obj_cache[key] = (now, value)
+        return value
+
     def clear_cache(self) -> int:
-        """Drop all cached paginations. Returns the number of entries cleared."""
-        count = len(self._cache)
+        """Drop all cached paginations and single-resource fetches.
+
+        Returns the number of entries cleared.
+        """
+        count = len(self._cache) + len(self._obj_cache)
         self._cache.clear()
+        self._obj_cache.clear()
         return count
 
     async def gather(

@@ -28,7 +28,7 @@ _MAX_RANGE = 1000
 async def _element_sysids(element_id: int) -> set:
     """Return the lowercased sample sys_ids referenced by a samples element."""
     try:
-        el = await client.get(f"{API}/elements/{element_id}.json")
+        el = await client.cached_get(f"{API}/elements/{element_id}.json")
     except LabguruError:
         return set()
     data = el.get("data") if isinstance(el, dict) else None
@@ -87,7 +87,7 @@ async def cmr_experiment_report(
 
     async def _one(eid: int) -> Optional[Dict[str, Any]]:
         try:
-            return await client.get(f"{API}/experiments/{eid}.json")
+            return await client.cached_get(f"{API}/experiments/{eid}.json")
         except LabguruError:
             return None
 

@@ -85,16 +85,21 @@ def test_cached_paginate_hits_cache():
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
-        return httpx.Response(200, json=[{"id": 1}])
+        page = int(request.url.params.get("page", 1))
+        return httpx.Response(200, json=[{"id": 1}] if page == 1 else [])
 
     c = _client(handler)
     first = _run(c.cached_paginate("/api/v1/items.json", per_page=1000))
     second = _run(c.cached_paginate("/api/v1/items.json", per_page=1000))
     assert first == second == [{"id": 1}]
-    assert calls["n"] == 1  # second call served from cache
+    after_two = calls["n"]
+    assert after_two > 0
+    # The second (cached) call must not have issued any new HTTP request.
+    _run(c.cached_paginate("/api/v1/items.json", per_page=1000))
+    assert calls["n"] == after_two  # still cached
     assert c.clear_cache() == 1
     _run(c.cached_paginate("/api/v1/items.json", per_page=1000))
-    assert calls["n"] == 2  # refetched after clear
+    assert calls["n"] > after_two  # refetched after clear
 
 
 def test_paginate_passes_bracket_params():
@@ -102,7 +107,8 @@ def test_paginate_passes_bracket_params():
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["params"] = dict(request.url.params)
-        return httpx.Response(200, json=[{"id": 1}])
+        page = int(request.url.params.get("page", 1))
+        return httpx.Response(200, json=[{"id": 1}] if page == 1 else [])
 
     c = _client(handler)
     from labguru_mcp.formatting import kendo_sort

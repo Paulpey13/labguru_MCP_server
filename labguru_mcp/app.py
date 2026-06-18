@@ -68,8 +68,8 @@ def tool(
 
 
 def _register_tools() -> None:
-    # Importing each module runs the @tool / @mcp.prompt decorators.
-    from . import prompts  # noqa: F401
+    # Importing each module runs the @tool / @mcp.prompt / @mcp.resource decorators.
+    from . import prompts, resources  # noqa: F401
     from .tools import (  # noqa: F401
         attachments,
         cmr,

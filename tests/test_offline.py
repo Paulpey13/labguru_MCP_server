@@ -151,6 +151,27 @@ def test_load_settings_respects_env():
             os.environ.pop(key, None)
 
 
+def test_date_range_helper():
+    from labguru_mcp.tools.experiments import _in_date_range
+
+    assert _in_date_range("2026-01-15 10:00", "2026-01-01", "2026-01-31") is True
+    assert _in_date_range("2026-02-01", "2026-01-01", "2026-01-31") is False
+    assert _in_date_range("2025-12-31", "2026-01-01", None) is False
+    assert _in_date_range("", "2026-01-01", None) is False
+
+
+def test_stock_date_and_location_helpers():
+    from labguru_mcp.tools.stocks import _location_name, _parse_date
+
+    assert _parse_date("2028-04-12").year == 2028
+    assert _parse_date("2028-04-12 10:00").month == 4
+    assert _parse_date(None) is None
+    assert _parse_date("not-a-date") is None
+    assert _location_name({"storage_location": {"name": "Fridge A"}}) == "Fridge A"
+    assert _location_name({"location": "Shelf 3"}) == "Shelf 3"
+    assert _location_name({}) is None
+
+
 def _run_all():
     failures = 0
     for name, fn in sorted(globals().items()):

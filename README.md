@@ -9,9 +9,10 @@ plain language.
 Built with `FastMCP` + async `httpx`. Open source under the MIT license, so any
 lab is free to use and adapt it.
 
-- 64 tools + 4 guided prompts across every Labguru domain (experiments,
-  protocols, projects, inventory, stocks, elements, shopping list / PO, reports,
-  companies, instruments, attachments, maintenance, plus CMR and safety helpers).
+- 67 tools + 4 guided prompts + 4 resources across every Labguru domain
+  (experiments, protocols, projects, inventory, stocks, elements, shopping list /
+  PO, reports, companies, instruments, attachments, maintenance, plus CMR and
+  safety helpers).
 - Configurable per instance: domain, custom biocollections, CMR field mapping,
   timeouts, concurrency, cache, retries.
 - Two auth modes: personal API token, or email/password (auto re-auth on expiry).
@@ -145,7 +146,7 @@ python -m labguru_mcp     # plain stdio server
 | Projects | `list_projects`, `get_project`, `list_folders`, `create_project`*, `update_project`* |
 | Inventory | `list_collections`, `list_inventory`, `search_inventory`, `get_inventory_item`, `get_collection_item`, `find_item_by_sysid`, `get_generic_item` |
 | CMR / Safety | `get_cmr_items`, `get_safety_links`, `cmr_experiment_report` |
-| Stocks | `list_stocks`, `get_stock`, `get_stock_by_barcode`, `create_stock`*, `update_stock`* |
+| Stocks | `list_stocks`, `get_stock`, `get_stock_by_barcode`, `expiring_stocks`, `create_stock`*, `update_stock`* |
 | Elements / UUID | `get_element`, `get_element_by_uuid`, `get_element_rows`, `resolve_uuid`, `list_sections`, `update_element`*, `create_element`*, `create_section`* |
 | Shopping / PO | `list_shopping_items`, `get_order`, `get_order_summary`, `get_last_order`, `add_shopping_item`* |
 | Reports | `list_reports`, `get_report`, `create_report`*, `update_report`*, `tag_report`* |
@@ -177,6 +178,17 @@ tools above; they do not call the API directly):
 | `duplicate_experiment(experiment_id)` | Inspect an experiment and plan its duplication |
 | `safety_data_sheets(collections)` | Collect safety data sheet (fiche de securite) links |
 
+## Resources
+
+Read-only records the client can attach as context (addressable URIs):
+
+| URI | Content |
+|---|---|
+| `labguru://experiment/{id}` | Full experiment JSON |
+| `labguru://protocol/{id}` | Full protocol JSON |
+| `labguru://stock/{id}` | Full stock JSON |
+| `labguru://inventory_item/{id}` | Full inventory item JSON |
+
 ## Notes
 
 - List tools return slim summaries to keep payloads small; use the matching
@@ -186,6 +198,11 @@ tools above; they do not call the API directly):
   `sort`/`direction` params are rejected by Labguru). Pass `oldest_first=true`
   to reverse. Use `count_experiments` for the true total without fetching every
   page (instances can hold tens of thousands of records).
+- `list_experiments` accepts `since`/`until` (YYYY-MM-DD) date filters. Recent
+  ranges are instant; filtering far back in time walks history and is slower.
+- Sample tables, CMR cross-references, and per-element fetches are cached for
+  `LABGURU_CACHE_TTL` seconds, so repeated `cmr_experiment_report` /
+  `expiring_stocks` / sample reads within a session are fast.
 - Pagination is handled internally (`page` / `per_page`), stopping when a page
   is empty or shorter than the page size. Wrapped responses (`value`, `data`,
   ...) are unwrapped automatically.

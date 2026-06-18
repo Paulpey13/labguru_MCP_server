@@ -9,6 +9,7 @@ from ..app import client, tool
 from ..errors import LabguruError
 from ..formatting import (
     experiment_procedures,
+    extract_list,
     kendo_sort,
     parse_sample_entries,
     slim_experiment,
@@ -19,6 +20,9 @@ API = "/api/v1"
 # A project rarely holds more than this many experiments; cap the window we sort
 # client-side when filtering by project (server-side sort + filter is unsupported).
 _PROJECT_WINDOW = 1000
+
+# Safety cap when walking back through history for a date filter (pages of 100).
+_DATE_WALK_MAX_PAGES = 80
 
 
 def _samples_element_ids(exp: Dict[str, Any]) -> List[int]:
@@ -35,7 +39,7 @@ def _samples_element_ids(exp: Dict[str, Any]) -> List[int]:
 async def _element_data(element_id: int) -> Optional[Dict[str, Any]]:
     """Fetch an element and return its parsed ``data`` payload (JSON string)."""
     try:
-        el = await client.get(f"{API}/elements/{element_id}.json")
+        el = await client.cached_get(f"{API}/elements/{element_id}.json")
     except LabguruError:
         return None
     data = el.get("data") if isinstance(el, dict) else None
@@ -62,9 +66,58 @@ async def experiment_samples(exp: Dict[str, Any]) -> List[Dict[str, Any]]:
     return samples
 
 
+def _in_date_range(value: Optional[str], since: Optional[str], until: Optional[str]) -> bool:
+    """True if the date prefix of ``value`` falls within [since, until]."""
+    day = (value or "")[:10]
+    if not day:
+        return False
+    if since and day < since[:10]:
+        return False
+    if until and day > until[:10]:
+        return False
+    return True
+
+
+async def _walk_dates(since: Optional[str], until: Optional[str]) -> List[Dict[str, Any]]:
+    """Walk experiments newest-first (by id) collecting those in a date range.
+
+    IDs increase with time, so we stop once a start_date drops below ``since``.
+    Bounded by a page cap; very old ranges may be truncated (best-effort).
+    """
+    params = kendo_sort("id", "desc")
+    per_page = 200
+    out: List[Dict[str, Any]] = []
+    page = 1
+    while page <= _DATE_WALK_MAX_PAGES:
+        raw = await client.request(
+            "GET",
+            f"{API}/experiments.json",
+            params={**params, "page": page, "per_page": per_page},
+        )
+        batch = extract_list(raw)
+        if not batch:
+            break
+        below = False
+        for e in batch:
+            day = (e.get("start_date") or "")[:10]
+            if since and day and day < since[:10]:
+                below = True
+                break
+            if _in_date_range(e.get("start_date"), since, until):
+                out.append(slim_experiment(e))
+        if below:
+            break
+        page += 1
+    return out
+
+
 @tool()
 async def list_experiments(
-    limit: int = 20, project_id: Optional[int] = None, oldest_first: bool = False
+    limit: int = 20,
+    project_id: Optional[int] = None,
+    oldest_first: bool = False,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """List experiments, most recent first by default.
 
@@ -72,30 +125,42 @@ async def list_experiments(
         limit: Maximum number of experiments to return (default 20).
         project_id: Restrict to a single project when provided.
         oldest_first: Return oldest first instead of most recent.
+        since: Keep only experiments whose start_date is on/after this date
+            (YYYY-MM-DD).
+        until: Keep only experiments whose start_date is on/before this date
+            (YYYY-MM-DD).
 
     Returns slim records: id, title, start_date, project_id, uuid, owner.
     """
-    direction = "asc" if oldest_first else "desc"
+    has_date_filter = bool(since or until)
+
+    # Date filter (no project): walk newest-first and stop past the range.
+    if has_date_filter and project_id is None:
+        rows = await _walk_dates(since, until)
+        if oldest_first:
+            rows.sort(key=lambda r: r.get("start_date") or "")
+        return rows[:limit]
 
     if project_id is None:
-        # Server-side recency sort: page 1 already holds the newest records.
+        direction = "asc" if oldest_first else "desc"
         try:
             raw = await client.paginate(
-                f"{API}/experiments.json",
-                limit=limit,
-                params=kendo_sort("id", direction),
+                f"{API}/experiments.json", limit=limit, params=kendo_sort("id", direction)
             )
         except LabguruError:
             raw = await client.paginate(f"{API}/experiments.json", limit=limit)
         return [slim_experiment(e) for e in raw]
 
     # Project filter and server-side sort cannot be combined, so fetch a bounded
-    # window for the project and sort it client-side.
-    window = await client.paginate(
+    # window for the project and sort/filter it client-side.
+    raw = await client.paginate(
         f"{API}/experiments.json", limit=_PROJECT_WINDOW, project_id=project_id
     )
-    window.sort(key=lambda e: e.get("id") or 0, reverse=not oldest_first)
-    return [slim_experiment(e) for e in window[:limit]]
+    raw.sort(key=lambda e: e.get("id") or 0, reverse=not oldest_first)
+    rows = [slim_experiment(e) for e in raw]
+    if has_date_filter:
+        rows = [r for r in rows if _in_date_range(r.get("start_date"), since, until)]
+    return rows[:limit]
 
 
 @tool()
