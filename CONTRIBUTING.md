@@ -20,8 +20,9 @@ No Labguru token or network access is required: the suites are fully offline
 ```bash
 pytest -q
 # or run the files directly:
-python tests/test_offline.py
-python tests/test_client.py
+python tests/test_offline.py   # pure helpers and config
+python tests/test_client.py    # HTTP client: auth, pagination, retries, cache
+python tests/test_tools.py     # tools end-to-end against a fake Labguru API
 ```
 
 ## Project layout

@@ -161,6 +161,38 @@ def test_retry_on_429_then_success():
     assert state["n"] == 2
 
 
+def test_paginate_all_parallel_via_meta():
+    seen_pages = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params.get("meta") == "true"
+        page = int(request.url.params.get("page", 1))
+        seen_pages.append(page)
+        data = [{"id": i} for i in range((page - 1) * 2, (page - 1) * 2 + 2)] if page <= 3 else []
+        return httpx.Response(
+            200,
+            json={
+                "data": data,
+                "meta": {"page": page, "page_size": 2, "page_count": 3, "item_count": 6},
+            },
+        )
+
+    c = _client(handler)
+    items = _run(c.paginate_all("/api/v1/things.json", per_page=2))
+    assert [it["id"] for it in items] == [0, 1, 2, 3, 4, 5]
+    assert sorted(seen_pages) == [1, 2, 3]
+
+
+def test_paginate_all_falls_back_without_meta():
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", 1))
+        return httpx.Response(200, json=[{"id": 1}] if page == 1 else [])
+
+    c = _client(handler)
+    items = _run(c.paginate_all("/api/v1/things.json", per_page=2))
+    assert items == [{"id": 1}]
+
+
 def test_retry_exhausted_raises():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={})
